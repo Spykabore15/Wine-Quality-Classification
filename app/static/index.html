@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wine Quality Classification</title>
+<style>
+  :root { --wine: #8c2d4b; --bg: #faf7f8; --muted: #6b6b6b; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; background: var(--bg); color: #222; margin: 0; padding: 2rem 1rem; }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { color: var(--wine); margin-bottom: .25rem; }
+  p.sub { color: var(--muted); margin-top: 0; }
+  form { background: #fff; border: 1px solid #e6dde0; border-radius: 10px; padding: 1.25rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .85rem 1rem; }
+  label { display: flex; flex-direction: column; font-size: .85rem; color: var(--muted); gap: .25rem; }
+  input, select { padding: .45rem .5rem; border: 1px solid #cfc3c7; border-radius: 6px; font-size: 1rem; }
+  .row { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1.1rem; }
+  button { padding: .55rem 1.1rem; border-radius: 6px; border: 1px solid var(--wine); cursor: pointer; font-size: .95rem;
+           background: #fff; color: var(--wine); }
+  button.primary { background: var(--wine); color: #fff; }
+  #result { margin-top: 1.25rem; padding: 1rem 1.25rem; border-radius: 10px; background: #fff; border: 1px solid #e6dde0; display: none; }
+  #result.good { border-left: 6px solid #2e7d32; } #result.bad { border-left: 6px solid #b23b3b; }
+  #verdict { font-size: 1.3rem; font-weight: 600; margin: 0 0 .5rem; }
+  .bar { position: relative; height: 14px; background: #eee; border-radius: 7px; margin: .8rem 0 .3rem; }
+  .bar > .fill { height: 100%; border-radius: 7px; background: var(--wine); }
+  .bar > .mark { position: absolute; top: -4px; width: 2px; height: 22px; background: #222; }
+  small { color: var(--muted); }
+  #error { color: #b23b3b; margin-top: 1rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Qualité du vin</h1>
+  <p class="sub">Un vin « Vinho Verde » est-il bon (note ≥ 7) ? Saisissez ses mesures physico-chimiques.</p>
+
+  <form id="form">
+    <div class="grid" id="fields"></div>
+    <div class="row">
+      <button type="submit" class="primary">Prédire</button>
+      <button type="button" data-preset="white_good">Exemple : blanc noté 8</button>
+      <button type="button" data-preset="red_bad">Exemple : rouge noté 5</button>
+    </div>
+  </form>
+
+  <div id="result">
+    <p id="verdict"></p>
+    <div class="bar"><div class="fill" id="fill"></div><div class="mark" id="mark"></div></div>
+    <small id="detail"></small>
+  </div>
+  <div id="error"></div>
+</main>
+
+<script>
+const FIELDS = [
+  ["fixed_acidity", "Acidité fixe (g/L)", 0.1], ["volatile_acidity", "Acidité volatile (g/L)", 0.01],
+  ["citric_acid", "Acide citrique (g/L)", 0.01], ["residual_sugar", "Sucre résiduel (g/L)", 0.1],
+  ["chlorides", "Chlorures (g/L)", 0.001], ["free_sulfur_dioxide", "SO₂ libre (mg/L)", 1],
+  ["total_sulfur_dioxide", "SO₂ total (mg/L)", 1], ["density", "Densité (g/cm³)", 0.0001],
+  ["pH", "pH", 0.01], ["sulphates", "Sulfates (g/L)", 0.01], ["alcohol", "Alcool (% vol.)", 0.1],
+];
+const PRESETS = {
+  white_good: { fixed_acidity: 6.6, volatile_acidity: 0.29, citric_acid: 0.31, residual_sugar: 3.9, chlorides: 0.027,
+    free_sulfur_dioxide: 39, total_sulfur_dioxide: 96, density: 0.9904, pH: 3.24, sulphates: 0.6, alcohol: 12.6, type: "white" },
+  red_bad: { fixed_acidity: 8.6, volatile_acidity: 0.63, citric_acid: 0.17, residual_sugar: 2.9, chlorides: 0.099,
+    free_sulfur_dioxide: 21, total_sulfur_dioxide: 119, density: 0.998, pH: 3.09, sulphates: 0.52, alcohol: 9.3, type: "red" },
+};
+
+const fields = document.getElementById("fields");
+for (const [name, label, step] of FIELDS) {
+  const l = document.createElement("label");
+  l.append(label);
+  const i = document.createElement("input");
+  Object.assign(i, { type: "number", name, step, required: true });
+  l.append(i);
+  fields.append(l);
+}
+const typeLabel = document.createElement("label");
+typeLabel.append("Type de vin");
+const sel = document.createElement("select");
+sel.name = "type";
+for (const [v, t] of [["white", "Blanc"], ["red", "Rouge"]]) sel.add(new Option(t, v));
+typeLabel.append(sel);
+fields.append(typeLabel);
+
+const form = document.getElementById("form");
+function fill(p) { for (const [k, v] of Object.entries(p)) form.elements[k].value = v; }
+document.querySelectorAll("[data-preset]").forEach(b => b.addEventListener("click", () => fill(PRESETS[b.dataset.preset])));
+fill(PRESETS.white_good);
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("error"), box = document.getElementById("result");
+  err.textContent = ""; box.style.display = "none";
+  const body = {};
+  for (const [name] of FIELDS) body[name] = parseFloat(form.elements[name].value);
+  body.type = form.elements.type.value;
+  try {
+    const r = await fetch("/predict", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await r.json();
+    if (!r.ok) {
+      const d = data.detail;
+      err.textContent = Array.isArray(d) ? d.map(x => `${x.loc.slice(-1)[0]} : ${x.msg}`).join(" ; ") : d;
+      return;
+    }
+    const good = data.prediction === 1;
+    box.className = good ? "good" : "bad";
+    document.getElementById("verdict").textContent = good ? "Bon vin" : "Vin ordinaire";
+    document.getElementById("fill").style.width = (data.probability * 100) + "%";
+    document.getElementById("mark").style.left = (data.threshold * 100) + "%";
+    document.getElementById("detail").textContent =
+      `Probabilité d'être un bon vin : ${(data.probability * 100).toFixed(1)} % — seuil de décision : ${(data.threshold * 100).toFixed(1)} % (trait noir).`;
+    box.style.display = "block";
+  } catch (x) {
+    err.textContent = "Service indisponible.";
+  }
+});
+</script>
+</body>
+</html>
